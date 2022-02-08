@@ -46,34 +46,7 @@ updater_comm.prototype.notifyProgress = function () {
     if (mask & Inotify.IN_CLOSE_WRITE) {
       fs = require('fs');
       fs.readFile('/tmp/updater', function (err, dota) {
-        try {
-          var data = dota.toString();
-          // console.log("Got " + data);
-          var arr = data.split('\n');
-          if (arr.length > 1) {
-            var message = arr[0];
-            var obj = JSON.parse(arr[1]);
-            if (obj != undefined && obj.updateavailable != undefined && !obj.updateavailable) {
-              obj.description = self.commandRouter.getI18nString('SYSTEM.UPDATE_ALREADY_LATEST_VERSION');
-              obj.title = self.commandRouter.getI18nString('SYSTEM.NO_UPDATE_AVAILABLE');
-            }
-            if (obj.status) {
-              obj.status = self.translateUpdateString(obj.status);
-            }
-            if (obj.message) {
-              obj.message = self.translateUpdateString(obj.message);
-            }
-            if (message === 'updateDone') {
-              return self.initRestartRoutine(obj.message);
-            } else {
-              self.commandRouter.executeOnPlugin('user_interface', 'websocket', 'broadcastMessage', {'msg': message, 'value': obj});
-            }
-            console.log(message);
-            console.log(obj);
-          }
-        } catch (e) {
-          self.logger.error('Error in translating update message: ' + e);
-        }
+        self.parseNotifyProgress(dota);
       });
     }
   };
@@ -87,6 +60,38 @@ updater_comm.prototype.notifyProgress = function () {
     var ilFileDescriptor = inotify.addWatch(ilFile);
   });
 };
+
+updater_comm.prototype.parseNotifyProgress = function (dota) {
+  var self = this;
+  try {
+    var data = dota.toString();
+    // console.log("Got " + data);
+    var arr = data.split('\n');
+    if (arr.length > 1) {
+      var message = arr[0];
+      var obj = JSON.parse(arr[1]);
+      if (obj != undefined && obj.updateavailable != undefined && !obj.updateavailable) {
+        obj.description = self.commandRouter.getI18nString('SYSTEM.UPDATE_ALREADY_LATEST_VERSION');
+        obj.title = self.commandRouter.getI18nString('SYSTEM.NO_UPDATE_AVAILABLE');
+      }
+      if (obj.status) {
+        obj.status = self.translateUpdateString(obj.status);
+      }
+      if (obj.message) {
+        obj.message = self.translateUpdateString(obj.message);
+      }
+      if (message === 'updateDone') {
+        return self.initRestartRoutine(obj.message);
+      } else {
+        self.commandRouter.executeOnPlugin('user_interface', 'websocket', 'broadcastMessage', {'msg': message, 'value': obj});
+      }
+      console.log(message);
+      console.log(obj);
+    }
+  } catch (e) {
+    self.logger.error('Error in translating update message: ' + e);
+  }
+}
 
 updater_comm.prototype.translateUpdateString = function (string) {
   var self = this;
@@ -290,5 +295,20 @@ updater_comm.prototype.killInterferingProcesses = function () {
         self.logger.error('Cannot kill process: ' + error);
       }
     });
+  }
+};
+
+updater_comm.prototype.dynamicProgressUpdater = function (action) {
+  var self = this;
+  var dynamicProgressFrequency = 5;
+
+  if (action && action === 'start') {
+    self.updateDynamicProgress= setInterval(()=> {
+      self._executeScan();
+    }, dynamicProgressFrequency * 1000);
+  } else {
+    if (self.updateDynamicProgress) {
+      clearInterval(self.updateDynamicProgress);
+    }
   }
 };
