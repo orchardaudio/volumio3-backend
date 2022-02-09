@@ -9,7 +9,12 @@ global.exec = require('child_process').exec;
 var execSync = require('child_process').execSync;
 global.fs = require('fs');
 var libQ = require('kew');
+
+
 var interferingProcessesKilled = false;
+var lastSentObj = {};
+var dynamicProgressUpdaterStarted = false;
+var updateDynamicProgress;
 
 function updater_comm (context) {
   var self = this;
@@ -70,23 +75,31 @@ updater_comm.prototype.parseNotifyProgress = function (dota) {
     if (arr.length > 1) {
       var message = arr[0];
       var obj = JSON.parse(arr[1]);
+      var lastStatus = undefined;
       if (obj != undefined && obj.updateavailable != undefined && !obj.updateavailable) {
         obj.description = self.commandRouter.getI18nString('SYSTEM.UPDATE_ALREADY_LATEST_VERSION');
         obj.title = self.commandRouter.getI18nString('SYSTEM.NO_UPDATE_AVAILABLE');
       }
       if (obj.status) {
+        lastStatus = obj.status;
         obj.status = self.translateUpdateString(obj.status);
       }
       if (obj.message) {
         obj.message = self.translateUpdateString(obj.message);
       }
+      self.lastSentObj = obj;
       if (message === 'updateDone') {
-        return self.initRestartRoutine(obj.message);
+        self.dynamicProgressUpdater('stop');
+          if (lastStatus === 'Error') {
+              obj.status = 'error';
+              self.commandRouter.executeOnPlugin('user_interface', 'websocket', 'broadcastMessage', {'msg': message, 'value': obj});
+          } else {
+              return self.initRestartRoutine(obj.message);
+          }
       } else {
+        self.dynamicProgressUpdater('start');
         self.commandRouter.executeOnPlugin('user_interface', 'websocket', 'broadcastMessage', {'msg': message, 'value': obj});
       }
-      console.log(message);
-      console.log(obj);
     }
   } catch (e) {
     self.logger.error('Error in translating update message: ' + e);
@@ -300,15 +313,26 @@ updater_comm.prototype.killInterferingProcesses = function () {
 
 updater_comm.prototype.dynamicProgressUpdater = function (action) {
   var self = this;
-  var dynamicProgressFrequency = 5;
+  var dynamicProgressFrequency = 5000;
 
-  if (action && action === 'start') {
-    self.updateDynamicProgress= setInterval(()=> {
-      self._executeScan();
-    }, dynamicProgressFrequency * 1000);
+  if (action && action === 'start' && dynamicProgressUpdaterStarted === false) {
+      dynamicProgressUpdaterStarted = true;
+    updateDynamicProgress = setInterval(() => {
+      self.incrementDynamicProgress();
+    }, dynamicProgressFrequency);
   } else {
-    if (self.updateDynamicProgress) {
-      clearInterval(self.updateDynamicProgress);
+    if (updateDynamicProgress) {
+      self.lastSentObj = {};
+      clearInterval(updateDynamicProgress);
     }
   }
 };
+
+updater_comm.prototype.incrementDynamicProgress = function () {
+    var self = this;
+
+    // Here increment the status progress
+    self.parseNotifyProgress(lastSentObj);
+};
+
+
